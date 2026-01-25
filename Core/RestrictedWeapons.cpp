@@ -30,10 +30,36 @@ std::map<std::string, std::string> g_vecPhrases;
 
 std::map<int, std::unordered_map<std::string, int>> g_mRestrictedWeapons;
 
-CGameEntitySystem* GameEntitySystem()
+namespace AcquireResult
 {
-	return g_pUtils->GetCGameEntitySystem();
+  enum Type
+  {
+    Allowed,
+    InvalidItem,
+    AlreadyOwned,
+    AlreadyPurchased,
+    ReachedGrenadeTypeLimit,
+    ReachedGrenadeTotalLimit,
+    NotAllowedByTeam,
+    NotAllowedByMap,
+    NotAllowedByMode,
+    NotAllowedForPurchase,
+    NotAllowedByProhibition,
+  };
 }
+
+namespace AcquireMethod
+{
+	enum Type
+	{
+		PickUp,
+		Buy,
+	};
+}
+
+AcquireResult::Type (*UTIL_CanAcquire)(CPlayer_ItemServices* service, CEconItemView* pItemView, AcquireMethod::Type eType, uint* pLimit) = nullptr;
+
+funchook_t* m_CanAcquireHook = nullptr;
 
 const char* GetWeaponByDefIndex(int iIndex)
 {
@@ -78,6 +104,120 @@ const char* GetWeaponByDefIndex(int iIndex)
 		default: szWeapon = "weapon_knife"; break;
 	}
 	return szWeapon;
+}
+
+int GetNiggers(int iTeam)
+{
+	int iCount = 0;
+	for(int i = 0; i < 64; i++)
+	{
+		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(i);
+		if(!pPlayer || g_pPlayers->IsFakeClient(i)) continue;
+		int iTeam2 = pPlayer->GetTeam();
+		if(iTeam2 < 2 && !g_bSpecPlayers) continue;
+		if(g_iTypePlayers == 1) iCount++;
+		else if(g_iTypePlayers == 2 && (iTeam == iTeam2)) iCount++;
+	}
+	return iCount;
+}
+
+int GetWeaponCount(const char* szWeapon, int iTeam)
+{
+	int iCount = 0;
+	for(int i = 0; i < 64; i++ )
+	{
+		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(i);
+		if(!pPlayer) continue;
+		CCSPlayerPawn* pPlayerPawn = pPlayer->GetPlayerPawn();
+		if(!pPlayerPawn) continue;
+		if(g_iTypeWeapons == 2 && iTeam != pPlayerPawn->GetTeam()) continue;
+		CCSPlayer_WeaponServices* m_pWeaponServices = pPlayerPawn->m_pWeaponServices();
+		if(m_pWeaponServices)
+		{
+			CUtlVector<CHandle<CBasePlayerWeapon>>* weapons = m_pWeaponServices->m_hMyWeapons();
+			
+			FOR_EACH_VEC(*weapons, i)
+			{
+				CBasePlayerWeapon* pWeapon = (*weapons)[i].Get();
+				if(!pWeapon) continue;
+				if(!strcmp(pWeapon->GetClassname(), szWeapon)) iCount++;
+			}
+		}
+	}
+	return iCount;
+}
+
+CCSPlayerController* GetPlayer(uint32 iSteamID)
+{
+    for(int i = 0; i < 64; i++)
+    {
+        if(g_pPlayers->IsFakeClient(i)) continue;
+        if(!g_pPlayers->IsAuthenticated(i)) continue;
+        if(!g_pPlayers->IsConnected(i)) continue;
+        if(!g_pPlayers->IsInGame(i)) continue;
+        int iSteamID2 = g_pPlayers->GetSteamID64(i);
+        if(iSteamID2 == iSteamID)
+            return CCSPlayerController::FromSlot(i);
+    }
+    return nullptr;
+}
+
+AcquireResult::Type CanAcquireHook(CPlayer_ItemServices* service, CEconItemView* pItemView, AcquireMethod::Type eType, uint* pLimit)
+{
+	if(!service || !pItemView) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+	CCSPlayerPawn* pPawn = service->GetPawn();
+	if(!pPawn) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+	CCSPlayerController* pController = (CCSPlayerController*)pPawn->GetController();
+	if(!pController) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+	int iSlot = pController->GetPlayerSlot();
+	if(iSlot < 0 || iSlot >= 64) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+	const int iDefIndex = pItemView->m_iItemDefinitionIndex();
+	const char* szWeapon = GetWeaponByDefIndex(iDefIndex);
+	
+	int iTeam = pPawn->GetTeam();
+	int iPlayersCount = GetNiggers(iTeam);
+	
+	int iLast = -1;
+	int bestFit = -1;
+	
+	for (const auto& it : g_mRestrictedWeapons)
+    {
+		if(iLast == -1 && it.first <= iPlayersCount) {
+			iLast = it.first;
+			bestFit = iLast;
+		}
+		else if(it.first > iLast && it.first <= iPlayersCount) {
+			iLast = it.first;
+			bestFit = iLast;
+		}
+    }
+    if (bestFit != -1)
+    {
+        const auto& weaponMap = g_mRestrictedWeapons[bestFit];
+        auto itWeapon = weaponMap.find(szWeapon);
+        if (itWeapon != weaponMap.end())
+        {
+            int weaponValue = itWeapon->second;
+			int iPlayersWeaponCount = GetWeaponCount(szWeapon, iTeam);
+			if(iPlayersWeaponCount < weaponValue || weaponValue == -1) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+			else {
+				if(g_pRWApi->SendOnWeaponRestrictedCallback(iSlot, szWeapon))
+				{
+					if(g_iUnblockType == 1 && weaponValue > 0) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+					else if(g_iUnblockType == 0) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+				}
+				if(!g_szBlockSound.empty()) g_pPlayers->EmitSound(iSlot, pController->entindex(), g_szBlockSound.c_str(), 1, 1.0);
+				g_pUtils->PrintToChat(iSlot, g_vecPhrases[g_iTypeWeapons == 2?"block_team":"block"].c_str(), g_vecPhrases[szWeapon].c_str(), weaponValue);
+				return AcquireResult::Type::NotAllowedByMode;
+			}
+        }
+    }
+	return UTIL_CanAcquire(service, pItemView, eType, pLimit);
+}
+
+CGameEntitySystem* GameEntitySystem()
+{
+	return g_pUtils->GetCGameEntitySystem();
 }
 
 void LoadConfigs()
@@ -153,66 +293,7 @@ bool RestrictedWeapons::Load(PluginId id, ISmmAPI* ismm, char* error, size_t max
 
 	g_pRWApi = new RWApi();
 	g_pRWCore = g_pRWApi;
-
 	return true;
-}
-
-int GetNiggers(int iTeam)
-{
-	int iCount = 0;
-	for(int i = 0; i < 64; i++)
-	{
-		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(i);
-		if(!pPlayer) continue;
-		CCSPlayerPawn* pPlayerPawn = pPlayer->GetPlayerPawn();
-		if(!pPlayerPawn) continue;
-		int iTeam2 = pPlayerPawn->GetTeam();
-		if(iTeam2 < 2 && !g_bSpecPlayers) continue;
-		if(g_iTypePlayers == 1) iCount++;
-		else if(g_iTypePlayers == 2 && (iTeam == iTeam2)) iCount++;
-	}
-	return iCount;
-}
-
-int GetWeaponCount(const char* szWeapon, int iTeam)
-{
-	int iCount = 0;
-	for(int i = 0; i < 64; i++ )
-	{
-		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(i);
-		if(!pPlayer) continue;
-		CCSPlayerPawn* pPlayerPawn = pPlayer->GetPlayerPawn();
-		if(!pPlayerPawn) continue;
-		if(g_iTypeWeapons == 2 && iTeam != pPlayerPawn->GetTeam()) continue;
-		CCSPlayer_WeaponServices* m_pWeaponServices = pPlayerPawn->m_pWeaponServices();
-		if(m_pWeaponServices)
-		{
-			CUtlVector<CHandle<CBasePlayerWeapon>>* weapons = m_pWeaponServices->m_hMyWeapons();
-			
-			FOR_EACH_VEC(*weapons, i)
-			{
-				CBasePlayerWeapon* pWeapon = (*weapons)[i].Get();
-				if(!pWeapon) continue;
-				if(!strcmp(pWeapon->GetClassname(), szWeapon)) iCount++;
-			}
-		}
-	}
-	return iCount;
-}
-
-CCSPlayerController* GetPlayer(uint32 iSteamID)
-{
-    for(int i = 0; i < 64; i++)
-    {
-        if(g_pPlayers->IsFakeClient(i)) continue;
-        if(!g_pPlayers->IsAuthenticated(i)) continue;
-        if(!g_pPlayers->IsConnected(i)) continue;
-        if(!g_pPlayers->IsInGame(i)) continue;
-        int iSteamID2 = g_pPlayers->GetSteamID64(i);
-        if(iSteamID2 == iSteamID)
-            return CCSPlayerController::FromSlot(i);
-    }
-    return nullptr;
 }
 
 void* RestrictedWeapons::OnMetamodQuery(const char* iface, int* ret)
@@ -232,98 +313,6 @@ bool RestrictedWeapons::Unload(char *error, size_t maxlen)
 	ConVar_Unregister();
 	
 	return true;
-}
-
-void OnItemPickup(const char* szName, IGameEvent* pEvent, bool bDontBroadcast)
-{
-	int iSlot = pEvent->GetInt("userid");
-	if(iSlot < 0 || iSlot > 64) return;
-	CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(iSlot);
-	if(!pPlayer) return;
-	CCSPlayerPawn* pPawn = pPlayer->GetPlayerPawn();
-	if(!pPawn) return;
-	CCSPlayer_WeaponServices* m_pWeaponServices = pPawn->m_pWeaponServices();
-	if(!m_pWeaponServices) return;
-	int iDefIndex = pEvent->GetInt("defindex");
-	CUtlVector<CHandle<CBasePlayerWeapon>>* weapons = m_pWeaponServices->m_hMyWeapons();
-	CCSWeaponBase* pWeapon = nullptr;
-	for(int i = 0; i < weapons->Count(); i++)
-	{
-		CCSWeaponBase* pWeapon2 = (CCSWeaponBase*)weapons->Element(i).Get();
-		if(!pWeapon2) continue;
-		if(pWeapon2->m_AttributeManager().m_Item().m_iItemDefinitionIndex() == iDefIndex) {
-			pWeapon = pWeapon2;
-			break;
-		}
-	}
-	if(!pWeapon) return;
-	const char* szWeapon = GetWeaponByDefIndex(iDefIndex);
-	int iTeam = pPawn->GetTeam();
-	int iPlayersCount = GetNiggers(iTeam);
-
-	int iLast = -1;
-	int bestFit = -1;
-
-	for (const auto& it : g_mRestrictedWeapons)
-    {
-		if(iLast == -1 && it.first <= iPlayersCount) {
-			iLast = it.first;
-			bestFit = iLast;
-		}
-		else if(it.first > iLast && it.first <= iPlayersCount) {
-			iLast = it.first;
-			bestFit = iLast;
-		}
-    }
-    if (bestFit != -1)
-    {
-        const auto& weaponMap = g_mRestrictedWeapons[bestFit];
-        auto itWeapon = weaponMap.find(szWeapon);
-        if (itWeapon != weaponMap.end())
-        {
-            int weaponValue = itWeapon->second;
-			int iPlayersWeaponCount = GetWeaponCount(szWeapon, iTeam);
-			if(iPlayersWeaponCount <= weaponValue || weaponValue == -1) return;
-			else {
-				if(g_pRWApi->SendOnWeaponRestrictedCallback(iSlot, szWeapon))
-				{
-					if(g_iUnblockType == 1 && weaponValue > 0) return;
-					else if(g_iUnblockType == 0) return;
-				}
-				engine->ClientCommand(iSlot, "play %s", g_szBlockSound.c_str());
-				g_pUtils->PrintToChat(iSlot, g_vecPhrases[g_iTypeWeapons == 2?"block_team":"block"].c_str(), g_vecPhrases[szWeapon].c_str(), weaponValue);
-				CHandle<CCSWeaponBase> hWeapon = pWeapon->GetHandle();
-				CHandle<CCSPlayerPawn> hPawn = pPawn->GetHandle();
-				g_pUtils->NextFrame([iSlot, hWeapon, hPawn](){
-					CCSWeaponBase *pWeapon = (CCSWeaponBase*)hWeapon.Get();
-					if(!pWeapon) return;
-					CCSPlayerPawn *pPawn = (CCSPlayerPawn*)hPawn.Get();
-					if(!pPawn) return;
-					int iPrice = pWeapon->GetWeaponVData()->m_nPrice();
-					uint32 iSteamID = pWeapon->m_OriginalOwnerXuidLow();
-					if(iSteamID != 0)
-					{
-						CCSPlayerController* pPlayer = GetPlayer(iSteamID);
-						if(pPlayer)
-						{
-							CCSPlayerPawn* pPawn = pPlayer->GetPlayerPawn();
-							if(pPawn && pPawn->IsAlive())
-							{
-								CCSPlayerController_InGameMoneyServices* pMoneyServices = pPlayer->m_pInGameMoneyServices();
-								if(pMoneyServices) {
-									pMoneyServices->m_iAccount() += iPrice;
-									g_pUtils->SetStateChanged(pPlayer, "CCSPlayerController", "m_pInGameMoneyServices");
-								}
-							}
-						}
-					}
-					g_pPlayers->DropWeapon(iSlot, pWeapon);
-					g_pUtils->RemoveEntity(pWeapon);
-				});
-			}
-        }
-    }
-
 }
 
 void RestrictedWeapons::AllPluginsLoaded()
@@ -363,8 +352,18 @@ void RestrictedWeapons::AllPluginsLoaded()
 	for (KeyValues *pKey = g_kvPhrases->GetFirstTrueSubKey(); pKey; pKey = pKey->GetNextTrueSubKey())
 		g_vecPhrases[std::string(pKey->GetName())] = std::string(pKey->GetString(g_pszLanguage));
 
-	g_pUtils->HookEvent(g_PLID, "item_pickup", OnItemPickup);
-	g_pUtils->HookEvent(g_PLID, "item_equip", OnItemPickup);
+	CModule libserver(g_pSource2Server);
+	UTIL_CanAcquire = libserver.FindPattern("55 48 89 E5 41 57 41 56 41 55 49 89 CD 41 54 49 89 FC 53 48 89 F3 48 83 EC 78").RCast< decltype(UTIL_CanAcquire) >();
+	if (!UTIL_CanAcquire)
+	{
+		g_pUtils->ErrorLog("[%s] Failed to find function to get UTIL_CanAcquire", g_PLAPI->GetLogTag());
+	}
+	else
+	{
+		m_CanAcquireHook = funchook_create();
+		funchook_prepare(m_CanAcquireHook, (void**)&UTIL_CanAcquire, (void*)CanAcquireHook);
+		funchook_install(m_CanAcquireHook, 0);
+	}
 }
 
 ///////////////////////////////////////
@@ -375,7 +374,7 @@ const char* RestrictedWeapons::GetLicense()
 
 const char* RestrictedWeapons::GetVersion()
 {
-	return "1.1.1";
+	return "2.0.0";
 }
 
 const char* RestrictedWeapons::GetDate()
