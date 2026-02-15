@@ -22,6 +22,8 @@ int g_iTypePlayers = 0;
 int g_iTypeWeapons = 0;
 int g_iUnblockType = 0;
 bool g_bSpecPlayers;
+int g_iIntervalMessage = 3;
+int g_iLastMessage[64];
 
 RWApi* g_pRWApi = nullptr;
 IRWApi* g_pRWCore = nullptr;
@@ -206,6 +208,8 @@ AcquireResult::Type CanAcquireHook(CPlayer_ItemServices* service, CEconItemView*
 					if(g_iUnblockType == 1 && weaponValue > 0) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
 					else if(g_iUnblockType == 0) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
 				}
+				if(g_iLastMessage[iSlot] + g_iIntervalMessage > std::time(nullptr)) return AcquireResult::Type::NotAllowedByMode;
+				g_iLastMessage[iSlot] = std::time(nullptr);
 				if(!g_szBlockSound.empty()) g_pPlayers->EmitSound(iSlot, pController->entindex(), g_szBlockSound.c_str(), 1, 1.0);
 				g_pUtils->PrintToChat(iSlot, g_vecPhrases[g_iTypeWeapons == 2?"block_team":"block"].c_str(), g_vecPhrases[szWeapon].c_str(), weaponValue);
 				return AcquireResult::Type::NotAllowedByMode;
@@ -236,6 +240,7 @@ void LoadConfigs()
 		g_iTypeWeapons = pKV->GetInt("type_weapons", 1);
 		g_iUnblockType = pKV->GetInt("unblock_type", 0);
 		g_bSpecPlayers = pKV->GetBool("spec_players", false);
+		g_iIntervalMessage = pKV->GetInt("interval_message", 3);
 		g_szBlockSound = strdup(pKV->GetString("block_sound"));
 		char szMap[64];
 		g_SMAPI->Format(szMap, sizeof(szMap), "%s", g_pUtils->GetCGlobalVars()->mapname);
