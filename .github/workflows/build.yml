@@ -40,10 +40,11 @@ jobs:
           git -C metamod-source submodule update --init --recursive
           git clone --branch cs2 --single-branch https://github.com/alliedmodders/hl2sdk.git hl2sdk-cs2
           git -C hl2sdk-cs2 checkout 7ae489c1722dfb117ff080d6403d85e01e9c53c9
-          ln -sf KeyValues.h hl2sdk-cs2/public/tier1/keyvalues.h
+          cp hl2sdk-cs2/public/tier1/KeyValues.h hl2sdk-cs2/public/tier1/keyvalues.h
           cd ..
           git clone https://github.com/pisex/SchemaEntity.git
           grep -rl NetworkStateChanged_t SchemaEntity | xargs -r sed -i 's/NetworkStateChanged_t/NetworkStateChangedData/g'
+          grep -rlE 'FL_PAWN_FAKECLIENT|FL_CONTROLLER_FAKECLIENT' SchemaEntity | xargs -r sed -i 's/FL_PAWN_FAKECLIENT/FL_FAKECLIENT/g; s/FL_CONTROLLER_FAKECLIENT/FL_FAKECLIENT/g'
 
       - name: Build Core
         run: |
