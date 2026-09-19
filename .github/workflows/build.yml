@@ -35,8 +35,11 @@ jobs:
           cd ..
           mkdir external
           cd external
-          git clone --recursive --branch master --single-branch https://github.com/alliedmodders/metamod-source.git
-          git clone --recursive --branch cs2 --single-branch https://github.com/alliedmodders/hl2sdk.git hl2sdk-cs2
+          git clone --branch master --single-branch https://github.com/alliedmodders/metamod-source.git
+          git -C metamod-source checkout 176bee4a8debb7625ab82c4059ac51809487278f
+          git -C metamod-source submodule update --init --recursive
+          git clone --branch cs2 --single-branch https://github.com/alliedmodders/hl2sdk.git hl2sdk-cs2
+          git -C hl2sdk-cs2 checkout 7ae489c1722dfb117ff080d6403d85e01e9c53c9
           cd ..
           git clone https://github.com/pisex/SchemaEntity.git
 
