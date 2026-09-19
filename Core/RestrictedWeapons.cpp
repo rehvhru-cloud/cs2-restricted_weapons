@@ -113,6 +113,7 @@ int GetNiggers(int iTeam)
 	int iCount = 0;
 	for(int i = 0; i < 64; i++)
 	{
+		if(!g_pPlayers->IsConnected(i) || !g_pPlayers->IsInGame(i)) continue;
 		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(i);
 		if(!pPlayer || g_pPlayers->IsFakeClient(i)) continue;
 		int iTeam2 = pPlayer->GetTeam();
@@ -128,6 +129,7 @@ int GetWeaponCount(const char* szWeapon, int iTeam)
 	int iCount = 0;
 	for(int i = 0; i < 64; i++ )
 	{
+		if(!g_pPlayers->IsConnected(i) || !g_pPlayers->IsInGame(i)) continue;
 		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(i);
 		if(!pPlayer) continue;
 		CCSPlayerPawn* pPlayerPawn = pPlayer->GetPlayerPawn();
@@ -137,12 +139,14 @@ int GetWeaponCount(const char* szWeapon, int iTeam)
 		if(m_pWeaponServices)
 		{
 			CUtlVector<CHandle<CBasePlayerWeapon>>* weapons = m_pWeaponServices->m_hMyWeapons();
-			
-			FOR_EACH_VEC(*weapons, i)
+			if(!weapons) continue;
+
+			FOR_EACH_VEC(*weapons, j)
 			{
-				CBasePlayerWeapon* pWeapon = (*weapons)[i].Get();
+				CBasePlayerWeapon* pWeapon = (*weapons)[j].Get();
 				if(!pWeapon) continue;
-				if(!strcmp(pWeapon->GetClassname(), szWeapon)) iCount++;
+				const char* szClass = pWeapon->GetClassname();
+				if(szClass && !strcmp(szClass, szWeapon)) iCount++;
 			}
 		}
 	}
@@ -175,13 +179,13 @@ AcquireResult::Type CanAcquireHook(CPlayer_ItemServices* service, CEconItemView*
 	if(iSlot < 0 || iSlot >= 64) return UTIL_CanAcquire(service, pItemView, eType, pLimit);
 	const int iDefIndex = pItemView->m_iItemDefinitionIndex();
 	const char* szWeapon = GetWeaponByDefIndex(iDefIndex);
-	
+
 	int iTeam = pPawn->GetTeam();
 	int iPlayersCount = GetNiggers(iTeam);
-	
+
 	int iLast = -1;
 	int bestFit = -1;
-	
+
 	for (const auto& it : g_mRestrictedWeapons)
     {
 		if(iLast == -1 && it.first <= iPlayersCount) {
@@ -316,7 +320,7 @@ void* RestrictedWeapons::OnMetamodQuery(const char* iface, int* ret)
 bool RestrictedWeapons::Unload(char *error, size_t maxlen)
 {
 	ConVar_Unregister();
-	
+
 	return true;
 }
 
@@ -379,7 +383,7 @@ const char* RestrictedWeapons::GetLicense()
 
 const char* RestrictedWeapons::GetVersion()
 {
-	return "2.0.0";
+	return "2.0.1-fix";
 }
 
 const char* RestrictedWeapons::GetDate()

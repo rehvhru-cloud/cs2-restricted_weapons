@@ -1,53 +1,34 @@
-name: Build AMBuild Plugin
+name: Build
 
 on:
   push:
-    paths-ignore:
-      - 'README.md'
     branches:
       - main
-  pull_request:
     paths-ignore:
       - 'README.md'
-    branches:
-      - main
-  release:
-    types:
-      - created
+  workflow_dispatch:
 
 jobs:
   build:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    permissions:
-      contents: write
-    runs-on: ubuntu-20.04
-    outputs:
-      buildnumber: ${{ steps.buildnumber.outputs.build_number }}
+    runs-on: ubuntu-22.04
 
     env:
       HL2SDK_ROOT: "${{ github.workspace }}/external"
       MMS_PATH: "${{ github.workspace }}/external/metamod-source"
       MANIFEST_PATH: "${{ github.workspace }}/external/metamod-source/hl2sdk-manifests"
+      CC: clang-14
+      CXX: clang++-14
 
     steps:
-      - name: Generate build number
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        id: buildnumber
-        uses: onyxmueller/build-tag-number@v1
-        with:
-          token: ${{secrets.github_token}}
-
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update -qy
-          sudo apt-get install -y git clang-10 clang++-10 binutils
-          sudo apt-get install -y python3
-          python3 -m pip install --upgrade pip importlib-metadata
-          python3 -m pip install setuptools==45.2.0
+          sudo apt-get install -y git clang-14 binutils python3 python3-pip zip
+          python3 -m pip install --upgrade pip
           git clone https://github.com/alliedmodders/ambuild.git
           cd ambuild
           pip install .
@@ -59,53 +40,19 @@ jobs:
           cd ..
           git clone https://github.com/pisex/SchemaEntity.git
 
-      - name: Build plugins
+      - name: Build Core
         run: |
-          PLUGIN_DIRS=("Core" "VIP_Module")
-          for PLUGIN in "${PLUGIN_DIRS[@]}"; do
-            cd $PLUGIN
-            mkdir -p build
-            cd build
-            python3 ../configure.py -s cs2 --targets x86_64 --enable-optimize --hl2sdk-manifests=./hl2sdk-manifests --mms_path=$MMS_PATH --hl2sdk-root=$HL2SDK_ROOT
-            ambuild
-            cd package
-            zip -r ${PLUGIN}.zip addons
-            mv ${PLUGIN}.zip ${{ github.workspace }}
-            cd ${{ github.workspace }}
-          done
+          cd Core
+          mkdir -p build
+          cd build
+          python3 ../configure.py -s cs2 --targets x86_64 --enable-optimize --hl2sdk-manifests=$MANIFEST_PATH --mms_path=$MMS_PATH --hl2sdk-root=$HL2SDK_ROOT
+          ambuild
+          cd package
+          zip -r Core.zip addons
+          mv Core.zip ${{ github.workspace }}/Core.zip
 
-      - name: Upload archives to artifact
-        uses: actions/upload-artifact@v3
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: compile
-          path: |
-            ${{ github.workspace }}/Core.zip
-            ${{ github.workspace }}/VIP_Module.zip
-
-  release:
-      needs: build
-      permissions:
-        contents: write
-      runs-on: ubuntu-20.04
-  
-      steps:
-        - name: Download build artifact
-          uses: actions/download-artifact@v3
-          with:
-            name: compile
-            path: .
-  
-        - name: List files in directory
-          run: ls -la
-  
-        - name: Find downloaded artifacts
-          id: find_artifacts
-          run: echo "ARTIFACTS=$(ls *.zip | tr '\n' ',')" >> $GITHUB_ENV
-  
-        - name: Upload release
-          uses: softprops/action-gh-release@v1
-          with:
-            tag_name: ${{ github.event.head_commit.message }}
-            files: ${{ env.ARTIFACTS }}
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: Core
+          path: ${{ github.workspace }}/Core.zip
