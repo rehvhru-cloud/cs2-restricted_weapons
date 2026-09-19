@@ -42,6 +42,7 @@ jobs:
           git -C hl2sdk-cs2 checkout 7ae489c1722dfb117ff080d6403d85e01e9c53c9
           cd ..
           git clone https://github.com/pisex/SchemaEntity.git
+          grep -rl NetworkStateChanged_t SchemaEntity | xargs -r sed -i 's/NetworkStateChanged_t/NetworkStateChangedData/g'
 
       - name: Build Core
         run: |
