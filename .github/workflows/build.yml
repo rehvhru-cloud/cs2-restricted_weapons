@@ -36,10 +36,11 @@ jobs:
           mkdir external
           cd external
           git clone --branch master --single-branch https://github.com/alliedmodders/metamod-source.git
-          git -C metamod-source checkout 176bee4a8debb7625ab82c4059ac51809487278f
+          git -C metamod-source checkout 465f1a02081996a0eb0665a9fa0189c092a82936
           git -C metamod-source submodule update --init --recursive
           git clone --branch cs2 --single-branch https://github.com/alliedmodders/hl2sdk.git hl2sdk-cs2
           git -C hl2sdk-cs2 checkout 7ae489c1722dfb117ff080d6403d85e01e9c53c9
+          ln -sf KeyValues.h hl2sdk-cs2/public/tier1/keyvalues.h
           cd ..
           git clone https://github.com/pisex/SchemaEntity.git
           grep -rl NetworkStateChanged_t SchemaEntity | xargs -r sed -i 's/NetworkStateChanged_t/NetworkStateChangedData/g'
